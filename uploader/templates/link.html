@@ -1,0 +1,89 @@
+{% extends 'base.html' %}
+{% block title %}
+Download Link
+{% endblock %}
+{% block content %}
+
+<div class="row justify-content-center">
+    <div class="col-md-4">
+        <div class="card shadow">
+            <div class="card-body">
+                <h3 class="text-center mb-4">
+                    Download Ready
+                </h3>
+                <label class="form-label">
+                    Download Link
+                </label>
+                <div class="alert alert-secondary">
+                    <p id="downloadLink" class="mb-0 text-break">
+                        {{ download_url }}
+                    </p>
+                </div>
+
+                <button id="copyBtn"
+                        class="btn btn-success w-100"
+                        onclick="copyLink()">
+                    Copy Link
+                </button>
+
+                <hr>
+                <div class="text-center mt-4">
+                    <h5>Scan QR Code</h5>
+                    <img
+                        src="/media/{{ file.qr_code }}"
+                        width="200"
+                        class="img-fluid"
+                    >
+                </div>
+                <hr>
+                <div class="alert alert-info mt-4">
+                  <strong>Expires In:</strong>
+                  <span id="countdown">Loading...</span>
+                </div>
+                <hr>
+                <div class="alert alert-warning mt-3">
+                    <strong>Downloads Allowed:</strong>
+                    {{ remaining }}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+
+function copyLink() {
+  const link = document.getElementById("downloadLink").textContent.trim();
+  navigator.clipboard.writeText(link);
+
+  const btn = document.getElementById("copyBtn");
+  btn.textContent = "Link Copied";
+
+  setTimeout(() => {
+    btn.textContent = "Copy Link";
+  }, 2000);
+}
+
+const expiryTime = new Date("{{ file.expiry_datetime|date:'c' }}").getTime();
+
+const timer = setInterval(() => {
+  const now = new Date().getTime();
+  const diff = expiryTime - now;
+
+  if (diff <= 0) {
+    clearInterval(timer);
+    document.getElementById("countdown").innerHTML = "Expired";
+    return;
+  }
+
+  let hrs = Math.floor(diff / (1000 * 60 * 60));
+  let mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+  let secs = Math.floor((diff % (1000 * 60)) / 1000);
+
+  document.getElementById("countdown").innerHTML =
+    `${hrs.toString().padStart(2,'0')}:${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`;
+
+}, 1000);
+
+</script>
+
+{% endblock %}

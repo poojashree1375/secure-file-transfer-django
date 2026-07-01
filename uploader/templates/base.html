@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+
+    <title>{% block title %}{% endblock %}</title>
+
+    <!-- Bootswatch theme -->
+    <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.3/dist/lux/bootstrap.min.css">
+
+    {% load static %}
+
+    <!-- <link rel="stylesheet" href="{% static 'uploader/style.css' %}">
+</head> -->
+
+<body>
+
+<div class="container py-5">
+
+    {% block content %}
+
+    {% endblock %}
+
+</div>
+
+</body>
+</html>

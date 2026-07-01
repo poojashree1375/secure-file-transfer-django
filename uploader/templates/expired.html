@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% block title %}Unavailable{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-5">
+        <div class="card shadow-lg p-4 text-center">
+            <h1 class="mb-3">⚠ File Unavailable</h1>
+            <p class="mb-3">
+                This file can no longer be downloaded.
+            </p>
+            <div class="alert alert-warning text-start">
+                <strong>Possible reasons:</strong>
+                <ul class="mb-0 mt-2">
+                    <li>The link has expired</li>
+                    <li>The download limit is reached</li>
+                </ul>
+            </div>
+            <a href="/" class="btn btn-primary mt-3">
+                Upload New File
+            </a>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
