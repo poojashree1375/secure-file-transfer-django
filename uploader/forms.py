@@ -68,7 +68,6 @@ class UploadForm(forms.Form):
 
         # TODO(pre-deployment): the content_type check above relies on a value
         # supplied by the client. Before deploying, swap it for a magic-byte
-        # check using `python-magic` (pip install python-magic-bin on Windows)
         # so a renamed .exe can't pass as a .pdf.
 
         if file.size > MAX_FILE_SIZE:

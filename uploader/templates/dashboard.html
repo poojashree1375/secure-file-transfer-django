@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Secure File Transfer{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="mb-0">My Uploads</h1>
+            <a href="{% url 'upload' %}" class="btn btn-primary">Upload a file</a>
+        </div>
+
+        {% if rows %}
+        <div class="card shadow-sm">
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th scope="col">File</th>
+                                <th scope="col">Uploaded</th>
+                                <th scope="col">Expires/Deleted</th>
+                                <th scope="col" class="text-center">Downloads</th>
+                                <th scope="col" class="text-center">Status</th>
+                                <th scope="col" class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in rows %}
+                            <tr class="{% if row.is_deleted %}table-secondary{% endif %}">
+                                <td class="text-break" style="max-width: 18rem;">
+                                    {{ row.obj.file_name }}
+                                </td>
+                                <td><small class="text-muted">{{ row.obj.uploaded_at|date:"M j, H:i" }}</small></td>
+                                <td><small class="text-muted">
+                                    {% if row.is_deleted %}
+                                        {{ row.obj.deleted_at|date:"M j, H:i" }}
+                                    {% else %}
+                                        {{ row.obj.expiry_datetime|date:"M j, H:i" }}
+                                    {% endif %}
+                                </small></td>
+                                <td class="text-center">
+                                    {% if not row.is_deleted %}
+                                        <span class="font-monospace">{{ row.obj.download_count }} / {{ row.obj.max_downloads }}</span>
+                                    {% else %}
+                                        <span class="font-monospace">{{ row.obj.download_count }} / {{ row.obj.max_downloads }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if row.is_deleted %}
+                                        <span class="badge bg-secondary">{{ row.obj.get_reason_display }}</span>
+                                    {% else %}
+                                        {% if row.spent %}
+                                            {% if row.obj.download_count >= row.obj.max_downloads %}
+                                                <span class="badge bg-secondary">Quota spent</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary">Expired</span>
+                                            {% endif %}
+                                        {% else %}
+                                            <span class="badge bg-success">Live</span>
+                                        {% endif %}
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    {% if not row.is_deleted and not row.spent %}
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-success me-1"
+                                                data-copy-url="{% url 'download_file' row.obj.token %}"
+                                                onclick="copyLink(this)">
+                                            Copy link
+                                        </button>
+                                        <form method="post"
+                                              action="{% url 'delete_file' row.obj.token %}"
+                                              class="d-inline"
+                                              onsubmit="return confirm('Delete {{ row.obj.file_name|escapejs }}? This cannot be undone.');">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                                        </form>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="card shadow-sm">
+            <div class="card-body text-center py-5">
+                <h4 class="mb-3">You haven't uploaded any files yet.</h4>
+                <p class="text-muted mb-4">
+                    Upload a file to generate a one-time encrypted download link.
+                </p>
+                <a href="{% url 'upload' %}" class="btn btn-primary">Upload your first file</a>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+// Build an absolute URL the same way Django would, since the template
+// only gives us a path. Works in dev (localhost) and on Render.
+function absoluteUrl(path) {
+    return window.location.origin + path;
+}
+
+function copyLink(btn) {
+    const path = btn.getAttribute("data-copy-url");
+    const link = absoluteUrl(path);
+    navigator.clipboard.writeText(link).then(() => {
+        const original = btn.textContent;
+        btn.textContent = "Copied!";
+        btn.classList.remove("btn-outline-success");
+        btn.classList.add("btn-success");
+        setTimeout(() => {
+            btn.textContent = original;
+            btn.classList.remove("btn-success");
+            btn.classList.add("btn-outline-success");
+        }, 1500);
+    });
+}
+</script>
+{% endblock %}

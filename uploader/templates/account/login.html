@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% load crispy_forms_tags %}
+
+{% block title %}Sign in · Secure File Transfer{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-5">
+        <div class="card shadow-sm">
+            <div class="card-body p-4">
+                <h2 class="card-title mb-4 text-center">Sign in</h2>
+
+                <form method="post" action="{% url 'account_login' %}">
+                    {% csrf_token %}
+                    {{ form|crispy }}
+
+                    {% if redirect_field_value %}
+                        <input type="hidden" name="{{ redirect_field_name }}" value="{{ redirect_field_value }}" />
+                    {% endif %}
+
+                    <button class="btn btn-primary w-100 mt-3" type="submit">Sign in</button>
+                </form>
+
+                <p class="text-center mt-3 mb-0">
+                    New here? <a href="{% url 'account_signup' %}">Create an account</a>
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Sign out · Secure File Transfer{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-5">
+        <div class="card shadow-sm">
+            <div class="card-body p-4 text-center">
+                <h2 class="card-title mb-4">Sign out</h2>
+                <p>Are you sure you want to sign out?</p>
+
+                <form method="post" action="{% url 'account_logout' %}" class="mt-3">
+                    {% csrf_token %}
+                    {% if redirect_field_value %}
+                        <input type="hidden" name="{{ redirect_field_name }}" value="{{ redirect_field_value }}" />
+                    {% endif %}
+                    <button class="btn btn-danger" type="submit">Sign out</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
