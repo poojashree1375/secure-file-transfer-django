@@ -18,6 +18,7 @@ from .cleanup import cleanup_file
 from .crypto_utils import encrypt_file, decrypt_file
 from .forms import UploadForm
 from .models import FileUpload, DeletedUpload
+from .tokens import generate_token
 
 
 logger = logging.getLogger(__name__)
@@ -72,7 +73,7 @@ def upload_file(request):
                 f.write(encrypted)
 
             obj = FileUpload.objects.create(
-                token=str(uuid.uuid4()),
+                token=generate_token(),
                 file_name=uploaded.name,
                 file_path=filepath,
                 file_type=uploaded.content_type,

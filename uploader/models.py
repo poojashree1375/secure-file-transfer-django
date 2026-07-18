@@ -1,9 +1,11 @@
 from django.conf import settings
 from django.db import models
-import uuid
+
+from .tokens import generate_token
+
 
 class FileUpload(models.Model):
-    token=models.CharField(max_length=100,unique=True,default=uuid.uuid4)
+    token=models.CharField(max_length=100,unique=True,default=generate_token)
     expiry_datetime=models.DateTimeField(db_index=True)
     uploaded_at=models.DateTimeField(auto_now_add=True)
     file_name=models.CharField(max_length=255)
