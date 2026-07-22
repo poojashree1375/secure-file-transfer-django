@@ -55,6 +55,7 @@ dist/
 # --- OS junk ---
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # --- Merge conflict backups ---
 *.orig

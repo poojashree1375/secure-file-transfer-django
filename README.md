@@ -5,28 +5,50 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Tests](https://img.shields.io/badge/Tests-passing-brightgreen)
 
-A Django web application that lets users upload files, encrypts them at rest with **Fernet (AES-128-CBC + HMAC-SHA256)**, and hands the recipient a one-time shareable link and QR code. Links expire by time and by download count, and the encrypted blobs are scrubbed automatically once either limit is hit.
+A Django web app where signed-in users upload files, the server encrypts them at rest with **Fernet (AES-128-CBC + HMAC-SHA256)**, and the recipient gets a short shareable link and QR code. Links expire by time or by download count, and the encrypted blob is scrubbed once either limit is hit.
 
-> Files are encrypted on the server before being persisted to permanent storage and are never stored unencrypted in application-managed storage. Once expired or fully downloaded, the file, its QR code, and the database row are all wiped.
+> Files are encrypted on the server before being persisted to `MEDIA_ROOT` and are never stored unencrypted. Once expired or fully downloaded, the file, its QR code, and the database row are wiped — a `DeletedUpload` row is written first so the dashboard can still show what happened.
 
 ---
 
-## ✨ Features
+## Key Highlights
 
-- **Server-side at-rest encryption** using [`cryptography`](https://cryptography.io/) Fernet.
-- **Self-destructing share links** — bounded by expiry time *and* max download count, whichever comes first.
-- **QR code generation** for every upload so recipients can scan and grab the file on mobile.
-- **Race-safe download counter** — `select_for_update()` + `F()` expression inside `transaction.atomic()`, backed by row-level locking in production DBs like PostgreSQL. Concurrent requests can't both claim the last allowed download.
-- **Background cleanup** via APScheduler — expired files are wiped every minute.
+- 🔒 Files are encrypted with Fernet (AES-128-CBC + HMAC-SHA256) before they touch disk
+- 🔗 Share links expire by time or by download count, whichever comes first
+- 👤 Email-based login with a personal dashboard for every user
+- 📱 Every upload gets a QR code so recipients can grab the file on mobile
+- 🧹 APScheduler wipes expired blobs and their QR codes every minute
+
+---
+
+## Features
+
+### Security
+
+- **Server-side at-rest encryption** using [`cryptography`](https://cryptography.io/) Fernet — plaintext never hits disk.
 - **Strict upload validation** — file size, extension, and MIME-type checks; `10 MB` cap.
-- **Friendly UI** with a live countdown timer, copy-to-clipboard, and Bootstrap styling.
-- **Tested** — round-trip encryption, form validation, download quota, and expiry cleanup all covered.
+- **Race-safe download counter** — `select_for_update()` + `F()` inside `transaction.atomic()` so two simultaneous downloads can't both claim the last allowed slot.
+- **DeletedUpload audit log** — every wipe (manual, expiry, or quota-reached) is recorded before the ciphertext is removed, so the dashboard shows what happened.
+
+### Sharing & User Experience
+
+- **Self-destructing share links** — bounded by expiry time *and* max download count, whichever comes first.
+- **Short 22-character tokens** — base64-url encoded, clean in URLs and QR codes, with the same 128-bit entropy as a UUID4.
+- **Email-based authentication** via `django-allauth` — sign up and log in with just an email and password.
+- **Personal dashboard** for the logged-in user — lists every upload plus the delete history, with status badges, one-click link copy, and owner-only manual delete.
+- **QR code generation** for every upload so recipients can scan and grab the file on mobile.
+- **Friendly UI** — live countdown timer, copy-to-clipboard, Bootstrap 5 styling.
+
+### Backend & Reliability
+
+- **Background cleanup** via APScheduler — expired files are wiped every minute.
+- **Tested** — round-trip encryption, form validation, download quota, and expiry cleanup are covered.
 
 ---
 
-## 🏗 Architecture
+## Architecture
 
-The system has two flows: **upload → encrypt → share**, and **download → decrypt → cleanup**.
+Four flows: **upload → encrypt → share**, **download → decrypt → cleanup**, **auth + dashboard**, and the **APScheduler sweeper**.
 
 ### Upload Flow
 
@@ -68,16 +90,17 @@ The system has two flows: **upload → encrypt → share**, and **download → d
 ### Download Flow
 
 ```
-   ┌────────────┐    GET /d/<id>/    ┌──────────────────┐
-   │ Recipient  │ ──────────────────▶│  download view   │
-   │  Browser   │                    └────────┬─────────┘
+   ┌────────────┐    GET /download/<token>/   ┌──────────────────┐
+   │ Recipient  │ ───────────────────────────▶│  download view   │
+   │  Browser   │ (22-char token, no auth)   └────────┬─────────┘
    └────────────┘                             │
                           transaction.atomic() │  select_for_update
                                   + F('max_downloads') - 1
                                              ▼
                               ┌──────────────────────────┐
                               │ Quota hit? Expired?       │
-                              │  → delete blob, QR, row   │
+                              │  → delete blob, QR, row  │
+                              │    write DeletedUpload   │
                               │    render "expired.html"  │
                               └────────┬─────────────────┘
                               not yet  │
@@ -88,6 +111,42 @@ The system has two flows: **upload → encrypt → share**, and **download → d
                             │ → FileResponse       │
                             └──────────────────────┘
 ```
+
+### Auth & Dashboard Flow
+
+```
+   ┌──────────┐  GET /  (anon)  ┌────────────────┐
+   │ Visitor  │ ───────────────▶│ upload_file()  │
+   └──────────┘                 │ redirects to   │
+                                │ account_login  │
+                                └───────┬────────┘
+                                        │
+                            sign up/in  │  (django-allauth, email + password)
+                                        ▼
+                                ┌────────────────┐
+                                │ LOGIN_REDIRECT │
+                                │  → / (upload)  │
+                                └───────┬────────┘
+                                        ▼
+                                ┌────────────────┐         ┌──────────────────────┐
+                                │ upload_file()  │────────▶│  FileUpload row      │
+                                │  user=request  │         │  + 22-char token     │
+                                │   .user        │         │  + user FK           │
+                                └────────────────┘         └──────────┬───────────┘
+                                                                     │
+                                                                     ▼
+                                                          ┌──────────────────────┐
+                                                          │ GET /dashboard/      │
+                                                          │ lists the user's     │
+                                                          │ FileUpload rows      │
+                                                          │ + DeletedUpload rows │
+                                                          │  (status, copy link, │
+                                                          │   owner-only delete) │
+                                                          └──────────────────────┘
+```
+
+- **Downloads are unauthenticated** — recipients only need the token. The token is the capability.
+- **Uploads, the dashboard, and manual delete all require login.** The `user` FK on `FileUpload` is the ownership boundary used by the dashboard query and the `delete_file` view (which 404s if the row's `user` doesn't match `request.user`).
 
 ### Background Cleanup
 
@@ -106,19 +165,23 @@ The system has two flows: **upload → encrypt → share**, and **download → d
 
 ### Why these design choices
 
-- **Encrypt before disk, not after.** Plaintext never hits the filesystem, even briefly. The `UploadForm` writes the raw upload to a temp buffer, the view encrypts it, and only the ciphertext is written to `MEDIA_ROOT`.
-- **`select_for_update` + `F()`** locks the row during the decrement so two simultaneous downloads cannot both claim the final slot — the second request sees `max_downloads == 0` and is treated as expired.
-- **APScheduler bootstrap in `AppConfig.ready()`** with guards to prevent duplicate scheduler instances during Django's dev-server auto-reloads. Cleanup runs as long as the Django process is alive, without needing Celery or a separate worker for this single task.
-- **UUID-based download URL** (not the DB id) so links aren't enumerable.
+- **Encrypt before disk.** The view runs `Fernet.encrypt()` and writes only the ciphertext to `MEDIA_ROOT` — plaintext never touches the filesystem.
+- **Locked counter.** `select_for_update()` + `F()` inside `transaction.atomic()` keeps two simultaneous downloads from both winning the last slot. Full story in [Challenges Faced](#-challenges-faced).
+- **In-process scheduler.** APScheduler starts from `AppConfig.ready()` with reload-guards, so cleanup runs without a Celery or Redis dependency.
+- **22-char tokens.** `tokens.generate_token()` base64-url-encodes 16 random bytes, strips `=` padding, and keeps the full 128-bit entropy of a UUID4.
+- **Token-as-capability.** Downloads are unauthenticated (the token is the capability); the dashboard and manual delete are gated on the `user` FK, so a guessed token from another user's URL just 404s.
+- **Soft delete with a reason.** `cleanup_file()` writes a `DeletedUpload` snapshot first, then removes the blob, QR, and `FileUpload` row — the dashboard merges active and deleted rows for a full history.
 
 ---
 
-## 🛠 Tech Stack
+## Tech Stack
 
 | Layer       | Technology                                  |
 |-------------|---------------------------------------------|
 | Backend     | Django 5.2                                  |
-| Database    | SQLite (default)                            |
+| Database    | SQLite (dev) / PostgreSQL (prod via `DATABASE_URL`) |
+| Auth        | `django-allauth` (email + password)         |
+| Forms       | `django-crispy-forms` + `crispy-bootstrap5` |
 | Encryption  | `cryptography` (Fernet / AES-128-CBC)       |
 | QR Codes    | `qrcode`                                    |
 | Scheduler   | `APScheduler` (background)                  |
@@ -127,7 +190,7 @@ The system has two flows: **upload → encrypt → share**, and **download → d
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 secure_file_transfer/
@@ -136,34 +199,35 @@ secure_file_transfer/
 ├── db.sqlite3                 # Dev database (gitignored)
 ├── media/                     # Encrypted blobs + QR codes (gitignored)
 ├── secure_file_transfer/      # Django project package
-│   ├── settings.py
-│   ├── urls.py
+│   ├── settings.py            # allauth + crispy-forms config
+│   ├── urls.py                # /accounts/ (allauth) + / (uploader)
 │   ├── wsgi.py
 │   └── asgi.py
-└── uploader/                  # Main app
-    ├── models.py              # FileUpload model
-    ├── views.py               # upload / link / download views
-    ├── forms.py               # UploadForm with validation
-    ├── crypto_utils.py        # Fernet encrypt/decrypt helpers
-    ├── cleanup.py             # File deletion + scheduled expiry job
+└── uploader/
+    ├── models.py              # FileUpload + DeletedUpload (audit log)
+    ├── views.py               # upload / link / download / dashboard / delete
+    ├── forms.py               # UploadForm (size, ext, MIME validation)
+    ├── crypto_utils.py        # Fernet encrypt/decrypt
+    ├── tokens.py              # 22-char URL-safe token generator
+    ├── cleanup.py             # File deletion + scheduled expiry
     ├── scheduler.py           # APScheduler bootstrap
     ├── apps.py                # AppConfig that starts the scheduler
-    ├── admin.py               # Django admin registration
-    ├── urls.py
+    ├── admin.py
+    ├── urls.py                # /, /link/, /download/, /dashboard/, /delete/
     ├── tests.py
-    ├── management/
-    │   └── commands/
-    │       └── generate_key.py
+    ├── management/commands/generate_key.py
     └── templates/
         ├── base.html
         ├── upload.html
         ├── link.html
-        └── expired.html
+        ├── dashboard.html     # User-scoped active + deleted uploads
+        ├── expired.html
+        └── account/           # allauth templates (login, signup, logout)
 ```
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### 1. Prerequisites
 
@@ -218,84 +282,103 @@ Visit **http://127.0.0.1:8000/** to upload a file.
 
 ---
 
-## 🧑‍💻 Usage
+## Usage
 
-1. **Upload** a file (`PDF`, `TXT`, `PNG`, `JPG`, `DOCX`, or `ZIP`), pick an **expiry in minutes**, and choose a **max download count**.
-2. After upload you'll be redirected to a page showing:
-   - The **download link**
-   - A **QR code** for the link
-   - A **live countdown** to expiry
-   - The **remaining download count**
-3. Share the link (or QR code) with your recipient.
-4. Once the link expires *or* the download cap is hit, the encrypted blob, QR code, and database row are all deleted — subsequent requests see a "File Unavailable" page.
+1. **Sign up / log in** with your email and password (anonymous visitors on `/` are redirected to login).
+2. **Upload** a file (`PDF`, `TXT`, `PNG`, `JPG`, `DOCX`, or `ZIP`) and set an **expiry in minutes** and a **max download count**.
+3. The result page shows a **22-char download link**, a **QR code**, a live countdown, and the remaining download count. Share either with the recipient — they don't need an account.
+4. **`/dashboard/`** lists every upload you've made (live, expired, quota-spent) plus the delete history, with one-click link copy and an owner-only manual delete button.
+5. When a link expires, the download cap is hit, or you click **Delete**, the blob, QR, and `FileUpload` row are wiped and a `DeletedUpload` row is kept for the audit log. Later requests to the link see a "File Unavailable" page.
 
 ---
 
 ## 📸 Screenshots
 
-### Starting the App
+### Authentication
 
-![Terminal — app started](Screenshots/terminal-app-started.png)
-*The Django development server running locally. Visit http://127.0.0.1:8000/ to start uploading.*
+![Login page](Screenshots/login-page.png)
+*The login screen — email + password via `django-allauth`. Anonymous visitors hitting `/` are redirected here.*
+
+![Signup page](Screenshots/signup-page.png)
+*Sign-up form — email is the unique identifier, no username required.*
 
 ### Upload Flow
 
 ![Upload page](Screenshots/upload-page.png)
-*The upload form — pick a file, set an expiry time in minutes, and choose a max download count.*
+*The upload form — pick a file, set an expiry time in minutes, and choose a max download count. Only logged-in users can see this view.*
 
-![Download link page](Screenshots/download-link-page.png)
+![Upload success — link page](Screenshots/upload-success-link-page.png)
 *After a successful upload: a one-time shareable link, a live countdown to expiry, and the remaining download count.*
 
-![QR code generated](Screenshots/QR-code-stored-in-media-after-upload.png)
-*The QR code is generated server-side and stored alongside the encrypted blob so recipients can scan and grab the file on mobile.*
+![QR code displayed](Screenshots/qr-code-display.png)
+*The QR code rendered on the success page so recipients can scan and grab the file on mobile.*
 
 ### Download Flow
 
-![Using the download link](Screenshots/using-download-link.png)
-*The recipient opens the shareable link in their browser.*
+![Using the download link](Screenshots/download-link-opened.png)
+*The recipient opens the shareable link in their browser — no login required, the token is the capability.*
 
 ![File downloaded](Screenshots/file-downloaded.png)
 *The decrypted file is delivered to the recipient. The download counter ticks down atomically — no two requests can claim the final slot.*
 
+### Dashboard
+
+![Dashboard — before link expiry](Screenshots/dashboard-before-link-expiry.png)
+*The user-scoped dashboard — every upload the logged-in user has made, with status badges, one-click link copy, and an owner-only delete button.*
+
+![Dashboard — after link expiry](Screenshots/dashboard-after-link-expiry.png)
+*The same dashboard after a link has expired: the `DeletedUpload` audit row keeps the metadata visible, so the user can still see what happened.*
+
 ### Encryption Proof
 
-![Encrypted file stored in media after upload](Screenshots/encrypted-file-stored-in-media-after-upload.png)
+![Original file content](Screenshots/original-file-content.png)
+*The original file as uploaded by the sender — this is the plaintext baseline.*
+
+![Encrypted file in media](Screenshots/encrypted-file-in-media.png)
 *What's actually written to disk — ciphertext, not plaintext. Even with full access to `MEDIA_ROOT`, the file is unreadable without the Fernet key.*
 
-![Decrypted file after download](Screenshots/decrypted-file-after-download.png)
-*After decryption on download, the bytes match the original upload — round-trip integrity confirmed.*
+![QR code in media](Screenshots/qr-code-in-media.png)
+*The generated QR code is also written to `MEDIA_ROOT` alongside the encrypted blob.*
 
-![Original file content](Screenshots/original-file-content.png)
-*The original file as uploaded by the sender, for direct comparison with the decrypted output above.*
+![Decrypted file content after download](Screenshots/decrypted-file-content-after-download.png)
+*After decryption on download, the bytes match the original upload — round-trip integrity confirmed.*
 
 ### Auto-Cleanup Proof
 
 ![Encrypted file auto-deleted after expiry](Screenshots/encrypted-file-auto-deleted-after-expiry.png)
 *Once the link expires or the download cap is hit, the encrypted blob is wiped from `MEDIA_ROOT` automatically — no manual cleanup needed.*
 
-![QR code auto-deleted after expiry](Screenshots/QR-code-auto-deleted-after-expiry.png)
+![QR code auto-deleted after expiry](Screenshots/qr-code-auto-deleted-after-expiry.png)
 *The QR code is removed alongside the encrypted blob. Subsequent requests to the link render the "File Unavailable" page.*
 
+### Starting the App
+
+![Terminal — app started](Screenshots/terminal-app-started.png)
+*The Django development server running locally. Visit http://127.0.0.1:8000/ to start uploading.*
+
 ---
 
-## 🔒 Security Notes
+## Security Notes
 
-- **At-rest encryption:** every uploaded file is encrypted with Fernet before it touches disk. The decryption key never leaves the server.
-- **Tamper detection:** Fernet authenticates ciphertext with HMAC; tampered files raise `InvalidToken` and are treated as expired.
-- **Race-safe quota:** the download counter is incremented inside a `transaction.atomic()` block with `select_for_update()` so two simultaneous downloads can't both win the last slot.
-- **Defence-in-depth on uploads:** the form checks size, extension, *and* MIME type. **Note:** the MIME check uses the browser-supplied `content_type` header, which a malicious client can forge — for production, swap it for a magic-byte check via `python-magic` (libmagic) so the type is derived from the file's actual bytes, not its claimed type. This is tracked as a deployment-time task.
+- **At-rest encryption:** every upload is encrypted with Fernet before it touches disk. The key never leaves the server. Tampered ciphertext raises `InvalidToken` and is treated as expired.
+- **Race-safe quota:** the download counter is incremented inside `transaction.atomic()` with `select_for_update()` so two simultaneous downloads can't both win the last slot (see [Challenges Faced](#-challenges-faced)).
+- **Anonymous download, authenticated ownership:** anyone with the token can download, but the dashboard and manual-delete are gated on `request.user` matching the `FileUpload.user` FK inside the queryset.
+- **`DeletedUpload` audit log:** deletions are recorded *before* the ciphertext is wiped, so the dashboard can show what happened without keeping plaintext.
+- **Defence-in-depth on uploads:** the form checks size, extension, *and* MIME type. The MIME check uses the browser-supplied `content_type`, which a client can forge — for production, swap it for a magic-byte check via `python-magic` (libmagic) so the type is derived from actual bytes. Tracked as a deployment task.
 - **Auto-cleanup:** APScheduler runs `delete_expired` every minute so stale blobs don't pile up.
-- **Production checklist:**
-  - Set `DEBUG = False`
-  - Move `SECRET_KEY` and the Fernet key to environment variables
-  - Switch SQLite → PostgreSQL
-  - Serve `MEDIA_ROOT` from private storage (not a public CDN)
-  - Add HTTPS + rate limiting
-  - Implement magic-byte content-type validation via `python-magic` (the current MIME check is client-supplied and forgeable)
+
+### Production checklist
+
+- `DEBUG = False`; move `SECRET_KEY` and the Fernet key to env vars (or a KMS)
+- Set `EMAIL_BACKEND` to real SMTP/SendGrid (the dev setting prints to console)
+- Switch SQLite → PostgreSQL via the already-wired `DATABASE_URL`
+- Serve `MEDIA_ROOT` from private storage (not a public CDN)
+- HTTPS + rate limiting
+- Magic-byte MIME validation via `python-magic`
 
 ---
 
-## 🧪 Running the Tests
+## Running the Tests
 
 ```bash
 python manage.py test
@@ -313,7 +396,7 @@ Tests write uploads to a temporary `MEDIA_ROOT` so they never touch your real `m
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 | Setting                | Default                  | Where                |
 |------------------------|--------------------------|----------------------|
@@ -325,25 +408,44 @@ Tests write uploads to a temporary `MEDIA_ROOT` so they never touch your real `m
 
 ---
 
-## ⚠ Challenges Faced
+## Challenges Faced
 
-A handful of issues came up during the build that are worth documenting:
-
-- **Race condition on the download quota.** The naive `downloads_left = row.max_downloads - 1; row.save()` approach lets two concurrent requests both think they got the last slot. **Fix:** wrapped the read-and-decrement in `transaction.atomic()` with `select_for_update()` and used an `F()` expression so the row is locked for the duration of the transaction and the decrement happens in SQL, not in Python.
-- **APScheduler lifecycle in Django.** APScheduler doesn't auto-stop when Django's dev server reloads, which leaks threads on every code change. **Fix:** hook `scheduler.shutdown()` into Django's `AppConfig.ready()` so a single scheduler instance is started per process, and rely on `runserver`'s auto-reloader *not* spawning the app twice (the `apps.py` guards against that).
-- **MIME-type validation that isn't actually trustworthy.** I initially planned to validate by `request.FILES['file'].content_type`, but realised that header is set by the client and can be anything — a `.exe` can pretend to be a `.pdf`. **Fix (partial):** kept the client-supplied MIME check as a first line of defence, but documented the proper fix as magic-byte detection with `python-magic`. This is left as a deployment task because adding `libmagic` as a system dependency is a deployment-environment concern, not a code one.
-- **Fernet key loss = total data loss.** If `secret.key` is deleted or rotated without re-encrypting, every previously uploaded file becomes unreadable. **Fix:** the key path is documented in the README, the file is gitignored, and the `generate_key` management command makes the bootstrap explicit. A future improvement would be to store the key in an env var or KMS.
-- **Stale blobs from expired downloads.** Without a background job, files whose quota hits zero just sit on disk forever. **Fix:** APScheduler-driven `delete_expired()` runs every minute. The download view also deletes inline as a defence-in-depth measure so a user who hits the cap doesn't have to wait up to 60s for the file to vanish.
+- **Race condition on the download quota.** A naive `download_count + 1; row.save()` lets two concurrent requests both claim the last slot. **Fix:** wrapped the read-and-increment in `transaction.atomic()` with `select_for_update()` and used an `F()` expression so the row is locked for the transaction's duration and the increment happens in SQL, not in Python.
+- **APScheduler lifecycle in Django.** APScheduler doesn't auto-stop when `runserver` reloads, leaking threads on every code change. **Fix:** start a single scheduler in `AppConfig.ready()` with `apps.py` guards against the auto-reloader spawning the app twice, and let the process lifecycle handle shutdown.
+- **MIME-type validation that isn't actually trustworthy.** I initially planned to validate by `request.FILES['file'].content_type`, but that header is set by the client and can be anything — a `.exe` can pretend to be a `.pdf`. **Fix (partial):** kept the client-supplied MIME check as a first line of defence, with the proper fix (magic-byte detection via `python-magic`) left as a deployment task since adding `libmagic` is an environment concern, not a code one.
+- **Fernet key loss = total data loss.** Deleting or rotating `secret.key` without re-encrypting makes every prior upload unreadable. **Fix:** the key is gitignored, its path is documented, and `generate_key` makes the bootstrap explicit. (Future: env var or KMS — see [Future Improvements](#-future-improvements).)
+- **Stale blobs from quota-zeroed downloads.** Without a background job, files whose quota hits zero sit on disk forever. **Fix:** APScheduler-driven `delete_expired()` runs every minute; the download view also deletes inline as defence-in-depth so a user hitting the cap doesn't have to wait up to 60s.
+- **User-scoped data without leaking across accounts.** The dashboard must list only the requesting user's uploads, and the manual-delete endpoint must refuse to delete someone else's. **Fix:** dashboard uses `FileUpload.objects.filter(user=request.user)`; `delete_file` re-checks the FK in `get(token=..., user=request.user)`, so a guessed token from another user's URL just 404s.
+- **Shortening share links without losing entropy.** Raw UUID4s (36 chars, hyphens included) are clunky in URLs and QR codes. **Fix:** `tokens.generate_token()` base64-url-encodes the same 16 random bytes and strips `=` padding → 22 characters, identical 128-bit entropy. The new `CharField` has `default=generate_token`, so every new write gets a short token automatically.
+- **Soft delete vs hard delete for an audit trail.** The original code just deleted the row when a file was wiped, so the dashboard couldn't show "this used to be here." **Fix:** a separate `DeletedUpload` model captures metadata (name, type, max downloads, download count, user, timestamps, and a `manual` / `expired` / `quota` reason) before `cleanup_file()` removes the blob, QR, and `FileUpload` row. The dashboard merges active and deleted rows into one table with status badges.
+- **Email-as-identifier auth setup.** allauth's defaults assume a username, and switching to email-only requires opting out of the username field on every form. **Fix:** `ACCOUNT_AUTHENTICATION_METHOD = 'email'`, `ACCOUNT_USERNAME_REQUIRED = False`, `ACCOUNT_UNIQUE_EMAIL = True` in `settings.py`, plus custom `account/{login,signup,logout}.html` templates so the auth screens match the rest of the site.
 
 ---
 
-## 📜 License
+## Future Improvements
+
+Things I'd add if this were production-bound:
+
+- **Magic-byte MIME validation** via `python-magic` / libmagic — derive the content type from the file's actual bytes instead of the client-supplied header.
+- **Virus scanning** before encryption (e.g. ClamAV via `clamd` or a hosted API) so malicious payloads don't get re-served from a trusted URL.
+- **Password-protected share links** — require a per-upload passphrase on download in addition to the token.
+- **Email sharing** — let the sender type a recipient address and have the app mail the link instead of (or alongside) the QR code.
+- **Download analytics** — per-link event log: timestamp, IP, user-agent, outcome (success / expired / quota-spent), surfaced in the dashboard.
+- **Rate limiting** on upload and download endpoints (e.g. `django-ratelimit`) to slow down enumeration and brute force.
+- **Key management** via env var or a KMS (AWS KMS, GCP KMS, HashiCorp Vault) instead of a file on disk, with a re-encrypt job for key rotation.
+- **AWS S3 / object storage** for `MEDIA_ROOT` so blobs live in private, durable storage rather than on the app server's filesystem.
+- **Redis + Celery** for background jobs in production — APScheduler is fine for a single-process demo, but a real deployment wants the sweeper decoupled from the web tier and horizontally scalable.
+- **Docker / docker-compose** for a one-command spin-up of Django + Postgres + Redis + an Nginx reverse proxy serving `MEDIA_ROOT` privately.
+
+---
+
+## License
 
 This project is released under the **MIT License**. See [`LICENSE`](LICENSE) for details.
 
 ---
 
-## 🙋‍♀️ Author
+## Author
 
 Built by Pooja Shree R
 
