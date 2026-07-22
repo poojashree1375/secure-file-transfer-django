@@ -296,64 +296,61 @@ Visit **http://127.0.0.1:8000/** to upload a file.
 
 ### Authentication
 
-![Login page](Screenshots/login-page.png)
+![Login page](Screenshots/login-page.png)                                                                                                                         
 *The login screen — email + password via `django-allauth`. Anonymous visitors hitting `/` are redirected here.*
 
-![Signup page](Screenshots/signup-page.png)
+![Signup page](Screenshots/signup-page.png)                                                                                                                       
 *Sign-up form — email is the unique identifier, no username required.*
 
 ### Upload Flow
 
-![Upload page](Screenshots/upload-page.png)
+![Upload page](Screenshots/upload-page.png)                                                                                                                       
 *The upload form — pick a file, set an expiry time in minutes, and choose a max download count. Only logged-in users can see this view.*
 
-![Upload success — link page](Screenshots/upload-success-link-page.png)
-*After a successful upload: a one-time shareable link, a live countdown to expiry, and the remaining download count.*
+![Upload success — link page](Screenshots/upload-success-link-page.png)                                                                                           
+*After a successful upload: a shareable link, a live countdown to expiry, and the remaining download count.*
 
-![QR code displayed](Screenshots/qr-code-display.png)
+![QR code displayed](Screenshots/qr-code-display.png)                                                                                                                                                                                                                          
 *The QR code rendered on the success page so recipients can scan and grab the file on mobile.*
 
 ### Download Flow
 
-![Using the download link](Screenshots/download-link-opened.png)
+![Using the download link](Screenshots/download-link-opened.png)                                                                                                  
 *The recipient opens the shareable link in their browser — no login required, the token is the capability.*
 
-![File downloaded](Screenshots/file-downloaded.png)
+![File downloaded](Screenshots/file-downloaded.png)                                                                                                               
 *The decrypted file is delivered to the recipient. The download counter ticks down atomically — no two requests can claim the final slot.*
 
 ### Dashboard
 
-![Dashboard — before link expiry](Screenshots/dashboard-before-link-expiry.png)
+![Dashboard — before link expiry](Screenshots/dashboard-before-link-expiry.png)                                                                                   
 *The user-scoped dashboard — every upload the logged-in user has made, with status badges, one-click link copy, and an owner-only delete button.*
 
-![Dashboard — after link expiry](Screenshots/dashboard-after-link-expiry.png)
+![Dashboard — after link expiry](Screenshots/dashboard-after-link-expiry.png)                                                                                     
 *The same dashboard after a link has expired: the `DeletedUpload` audit row keeps the metadata visible, so the user can still see what happened.*
 
 ### Encryption Proof
 
-![Original file content](Screenshots/original-file-content.png)
+![Original file content](Screenshots/original-file-content.png)                                                                                                   
 *The original file as uploaded by the sender — this is the plaintext baseline.*
 
-![Encrypted file in media](Screenshots/encrypted-file-in-media.png)
+![Encrypted file in media](Screenshots/encrypted-file-in-media.png)                                                                                               
 *What's actually written to disk — ciphertext, not plaintext. Even with full access to `MEDIA_ROOT`, the file is unreadable without the Fernet key.*
 
-![QR code in media](Screenshots/qr-code-in-media.png)
+![QR code in media](Screenshots/qr-code-in-media.png)                                                                                                             
 *The generated QR code is also written to `MEDIA_ROOT` alongside the encrypted blob.*
 
-![Decrypted file content after download](Screenshots/decrypted-file-content-after-download.png)
+![Decrypted file content after download](Screenshots/decrypted-file-content-after-download.png)                                                                                                                                    
 *After decryption on download, the bytes match the original upload — round-trip integrity confirmed.*
 
 ### Auto-Cleanup Proof
 
-![Encrypted file auto-deleted after expiry](Screenshots/encrypted-file-auto-deleted-after-expiry.png)
+![Encrypted file auto-deleted after expiry](Screenshots/encrypted-file-auto-deleted-after-expiry.png)                                                             
 *Once the link expires or the download cap is hit, the encrypted blob is wiped from `MEDIA_ROOT` automatically — no manual cleanup needed.*
-
-![QR code auto-deleted after expiry](Screenshots/qr-code-auto-deleted-after-expiry.png)
-*The QR code is removed alongside the encrypted blob. Subsequent requests to the link render the "File Unavailable" page.*
 
 ### Starting the App
 
-![Terminal — app started](Screenshots/terminal-app-started.png)
+![Terminal — app started](Screenshots/terminal-app-started.png)                                                                                                   
 *The Django development server running locally. Visit http://127.0.0.1:8000/ to start uploading.*
 
 ---
